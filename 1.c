@@ -4,11 +4,11 @@
 #include <errno.h>
 #include <stdlib.h>
 #include <sys/wait.h>
-#include <sys/time.h>
 
 void parseCmd(char* cmd, char** params);
 int executeCmd(char** params);
 int changeDirectory(char *path);
+int backgr;	
 
 #define MAX_NUMBER_OF_PARAMS 5
 #define MAX_COMMAND_LENGTH 70
@@ -26,20 +26,12 @@ int main(int argc, char *argv[])
 		    }
 		parseCmd(cmd,params);
 		
-		if (strcmp(params[0], "\0") == 0) 
-		{
-			continue;
-		}
 		if (strcmp(params[0], "exit\0") == 0) 
 		{
 			break;
 		}
-		
-		
- 		
+	
 		executeCmd(params);
-		
-		
 	}
 	
 	return 0;
@@ -50,22 +42,21 @@ void parseCmd(char* cmd, char** params)
 	int i;
     for(i = 0; i < MAX_NUMBER_OF_PARAMS; i++) {
         params[i] = strsep(&cmd, " ");
+	
         if(params[i] == NULL) break;
     }
+	puts(params[i-1]);
+	if(strcmp(params[i-1], "&") == 0){
+			backgr = 1;
+			params[i-1] = NULL;
+	}
 }
 
 int executeCmd(char** params)
 {
-	
-
     // Fork process
     pid_t pid = fork();
-    
-    struct timeval tv;
-	time_t starttime;
-	gettimeofday(&tv, NULL); 
- 	starttime=tv.tv_sec*1000+tv.tv_usec;
-    //printf("The process id is %d\n", pid);
+    printf("Start process %d\n", pid);
 
     // Error
     if (pid == -1) {
@@ -85,7 +76,7 @@ int executeCmd(char** params)
         {
         	execvp(params[0], params);
         	}  
-		
+
         // Error occurred
         char* error = strerror(errno);
         printf("shell: %s: %s\n", params[0], error);
@@ -96,12 +87,8 @@ int executeCmd(char** params)
     else {
         // Wait for child process to finish
         int childStatus;
-        waitpid(pid, &childStatus, 0);
-        
-        gettimeofday(&tv, NULL); 
-		starttime = tv.tv_sec*1000+tv.tv_usec - starttime;
-		printf("%ims\n", (int)starttime*10);
-        
+	if(backgr == 0)
+        	waitpid(pid, &childStatus, 0);
         return 1;
     }
 }
@@ -110,5 +97,4 @@ int changeDirectory(char *path)
 {
 	return chdir(path);
 }
-
 
