@@ -56,15 +56,13 @@ void parseCmd(char* cmd, char** params)
 
 int executeCmd(char** params)
 {
-	
-
-    // Fork process
-    pid_t pid = fork();
-    
-    struct timeval tv;
+	struct timeval tv;
 	time_t starttime;
 	gettimeofday(&tv, NULL); 
  	starttime=tv.tv_sec*1000+tv.tv_usec;
+
+    // Fork process
+    pid_t pid = fork();
     //printf("The process id is %d\n", pid);
 
     // Error
