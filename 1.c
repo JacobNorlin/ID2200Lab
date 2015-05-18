@@ -6,6 +6,7 @@
 #include <sys/wait.h>
 #include <signal.h>
 #include <sys/time.h>
+#include <pwd.h>
 
 void parseCmd(char* cmd, char** params);
 void registerSighandler(int signalCode, void (*handler)(int sig ));
@@ -42,11 +43,6 @@ void printTermination(char* pType, int pid){
 	if(WIFSIGNALED(pid)) printf("%s process was terminated by %i signal", pType, WTERMSIG(pid)); 
 }
 
-void interruptHandler(int sig){
-	pid_t pid = getpid();
-	printf("pid %i", pid);
-	kill(SIGKILL, -1*pid);
-}
 
 int main(int argc, char *argv[])
 {
@@ -60,7 +56,11 @@ int main(int argc, char *argv[])
 	while (1){
 		
 		backgr = 0;
-		printf(">");
+
+		char cwd[1024];
+		if (getcwd(cwd, sizeof(cwd)) == NULL)
+			perror("getcwd() error");
+		printf("%s$ ",cwd);
 		/**
 		Will block signals while waiting for input from stdin, becuase
 		otherwise the signal handler will affect fgets.
@@ -79,14 +79,32 @@ int main(int argc, char *argv[])
 		}
 		
 		parseCmd(cmd,params);
-		
+
 		//Check if user writes exit
 		if (strcmp(params[0], "exit\0") == 0) 
 		{
 			exit(0);
 		}
+
+		if(strcmp(params[0],"cd")==0)
+		{
+			if(params[1] == NULL) params[1] = "~";
+			int status = changeDirectory(params[1]);
+			char* error = strerror(errno);
+			if(status){//error
+				printf("%s\n", error);
+			}
+		}else if(strcmp(params[0], "printenv") == 0){
+			int pipefd[2];
+		    if (pipe(pipefd) == -1) {
+				perror("pipe");
+				exit(EXIT_FAILURE);
+	    	}
+
+		}else{
+			executeCmd(params);
+		}
 	
-		executeCmd(params);
 	}
 	
 	return 0;
@@ -106,11 +124,16 @@ void parseCmd(char* cmd, char** params)
 	}
 }
 
+int checkEnv(){
+
+	
+
+	
+}
+
 int executeCmd(char** params)
 {
-	gid_t shellGid = getgid();
 	pid_t pid = fork();
-	setpgid(pid, shellGid);
 
 	struct timeval tvBefore;
 	gettimeofday(&tvBefore, NULL); 
@@ -121,40 +144,37 @@ int executeCmd(char** params)
 		printf("fork: %s\n", error);
 		return 1;
 	}else if (pid == 0) {
+
+		//if(backgr) setpgid(0,0);
+
 		
-		if(strcmp(params[0],"cd\0")==0)
-		{
-			changeDirectory(params[1]);
-		}
-		else
-		{
-			execvp(params[0], params);
-		}  
+		
+		execvp(params[0], params);
+		 
 
 		char* error = strerror(errno);
 		printf("shell: %s: %s\n", params[0], error);
 		return 0;
 	}else {
-       	
 		if(backgr == 0){
-			registerSighandler(SIGINT, interruptHandler);
 			blockSignal(SIGCHLD);
 			printf("Start foreground process %d\n", pid);
 			struct timeval tvAfter;
 			//Wait for foreground process to change status
 			pid = waitpid(pid, &childStatus, 0);
  			unblockSignal(SIGCHLD);
-			registerSighandler(SIGINT, SIG_IGN);
+			
 		
 			//Skriv ut tid
 			gettimeofday(&tvAfter, NULL); 
 			time_t time = ((tvAfter.tv_sec - tvBefore.tv_sec)*1000000L
 				   +(tvAfter.tv_usec - tvBefore.tv_usec))/1000;
 			printf("Parent process %d terminated in %ims\n", pid, (int)time);
-			
+			//
 			
 		}else{
 			
+       		//setpgid(pid, pid);
 			printf("Start background process %d\n", pid);
 		}
         return 1;
@@ -204,6 +224,13 @@ void registerSighandler(int signalCode, void (*handler)(int sig)){
 
 int changeDirectory(char *path)
 {
+	printf("Path %s", path);
+	if(strcmp(path, "~") == 0){
+
+		if ((path = getenv("HOME")) == NULL) {
+		    path = getpwuid(getuid())->pw_dir;
+		}	
+	}
 	return chdir(path);
 }
 
