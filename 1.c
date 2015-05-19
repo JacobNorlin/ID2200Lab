@@ -60,12 +60,16 @@ int main(int argc, char *argv[])
 		printf("SIDGET OFF");
 		backgroundProcessHandler(0);
 		#endif
+
+		/*Reset the background flag before a new command is read*/
 		backgr = 0;
 
+		/*Get the current directory and print it as the prompt. getcwd() = getcurrentowrkingdirectory*/
 		char cwd[1024];
 		if (getcwd(cwd, sizeof(cwd)) == NULL)
 			perror("getcwd() error");
 		printf("%s$ ",cwd);
+
 		/**
 		Will block signals while waiting for input from stdin, becuase
 		otherwise the signal handler will affect fgets.
@@ -74,11 +78,11 @@ int main(int argc, char *argv[])
 		fgets(cmd, sizeof(cmd),stdin);
 		unblockSignal(SIGCHLD);
 
-		//Check if there is any input, otherwise do nothing
+		/*Check if there is any input, otherwise do nothing*/
 		if(strlen(cmd) < 2){
 			continue;
 		}
-		//Replace last token with null character to make processing commands easier
+		/*Replace last token with null character to make processing commands easier*/
 		if(cmd[strlen(cmd)-1] == '\n') {
 		        cmd[strlen(cmd)-1] = '\0';
 		}
@@ -86,20 +90,22 @@ int main(int argc, char *argv[])
 		parseCmd(cmd,params);
 
 
-		//Check if user writes exit
+		/*Check if user writes exit*/
 		if (strcmp(params[0], "exit\0") == 0) 
 		{
 			exit(0);
 		}
 
+		/*cd is its own commands, so here we check for that*/
 		if(strcmp(params[0],"cd")==0)
 		{
-			if(params[1] == NULL) params[1] = "~";
+			if(params[1] == NULL) params[1] = "~"; /*writing just cd is equivalent to cd ~ */
 			int status = changeDirectory(params[1]);
 			char* error = strerror(errno);
-			if(status){//error
+			if(status){
 				printf("%s\n", error);
 			}
+		/*CheckEnv command*/
 		}else if(strcmp(params[0], "checkEnv") == 0){
 			checkEnv(params);
 
@@ -115,11 +121,13 @@ int main(int argc, char *argv[])
 void parseCmd(char* cmd, char** params)
 {   
 	int i;
+	/*Parse only the max number of commands. Currently only ignores if too many commands are given*/
 	for(i = 0; i < MAX_NUMBER_OF_PARAMS; i++) {
 		params[i] = strsep(&cmd, " ");
 		//printf("Params[%i]: %s",i,  params[i]);
 		if(params[i] == NULL) break;
 	}
+	/*Check if background process*/
 	if(strcmp(params[i-1], "&") == 0){
 		backgr = 1;
 		params[i-1] = NULL;
@@ -127,10 +135,17 @@ void parseCmd(char* cmd, char** params)
 }
 
 int checkEnv(char** params){
+		/*File descriptors for pipes*/
 		int in, fd[2];
 		char* input[MAX_NUMBER_OF_PARAMS+1];
-		//backgr = 1;
 
+		/*Set the in pipe to stdin
+		 *Create a pipe for the file descriptor
+		 *Set input to the command to be run
+		 *Execute that command with in as input pipe
+		 *and fd[1] as the output pipe.
+		 *Close pipe
+		 *Change in pipe to the write part of pipe*/
 		in = 0;
 		pipe(fd);
 		input[0] = "printenv";
@@ -138,6 +153,7 @@ int checkEnv(char** params){
 		close(fd[1]);
 		in = fd[0];
 
+		/*In case user gives any params to checkEnv we run grep on those params*/
 		if(params[1] != NULL){
 			pipe(fd);
 			params[0] = "grep";
@@ -152,13 +168,23 @@ int checkEnv(char** params){
 		close(fd[1]);
 		in = fd[0];
 
+		/*Make sure output goes to stdout again*/
 		if(in != 0)	dup2(in, 0);
 		
+		/*Get the current PAGER environment variable, otherwise use less*/
 		char* pager;
 		if((pager = getenv("PAGER"))==NULL){
 			pager = "less";
 		}
 		
+		input[0] = pager;
+		execvp(input[0], input);
+
+		/*In case there was an error with executing with less, execute with more instead.
+		 *execvp stops execution of this process if it is sucessful, so this should only
+		 *be run in case it fails.*/
+		pager = "less";
+
 		input[0] = pager;
 		execvp(input[0], input);
 
@@ -176,8 +202,10 @@ int executeCmd(int in, int out, char** params)
 {
 
 	printf("Starting process %s\n", params[0]);
+	/*Fork new process*/
 	pid_t pid = fork();
 
+	/*Store time when process started*/
 	struct timeval tvBefore;
 	gettimeofday(&tvBefore, NULL); 
     	
@@ -188,8 +216,10 @@ int executeCmd(int in, int out, char** params)
 		return 1;
 	}else if (pid == 0) {
 
-		//if(backgr) setpgid(0,0);
+		/*if(backgr) setpgid(0,0);*/
 
+		/*In case we are not on 0,1(stdin,stdout). We have to replace the input and 
+		 *output with the corresponding read and write parts of the given pipes*/
 		if (in != 0)
 		{
 		  dup2 (in, 0);
@@ -203,7 +233,7 @@ int executeCmd(int in, int out, char** params)
 		}
 		
 		execvp(params[0], params);
-		 
+		/*If we do not free params here, the program will run with old params again in case the execution fails*/
 		free(params);
 		char* error = strerror(errno);
 		printf("shell: %s: %s\n", params[0], error);
@@ -214,21 +244,23 @@ int executeCmd(int in, int out, char** params)
 		if(backgr == 0){
 			struct timeval tvAfter;
 			printf("Start foreground process %d\n", pid);
-			//Wait for foreground process to change status
+			/*Wait for foreground process to change status
+			 *We block SIGCHLD here to avoid having background
+			 *processes killing the foreground process when exiting
+			 *since the signal handler works on SIGCHLD*/
 			blockSignal(SIGCHLD);
 			pid = waitpid(pid, &childStatus, 0);
  			unblockSignal(SIGCHLD);
 			
 		
-			//Skriv ut tid
+			/*Take timestamp after the process has finished, print out total execution time in ms*/
 			gettimeofday(&tvAfter, NULL); 
 			time_t time = ((tvAfter.tv_sec - tvBefore.tv_sec)*1000000L
 				   +(tvAfter.tv_usec - tvBefore.tv_usec))/1000;
 			printf("Parent process %d terminated in %ims\n", pid, (int)time);
-			//
 			
 		}else{
-       		//setpgid(pid, pid);
+       		/*setpgid(pid, pid);*/
 			printf("Start background process %d\n", pid);
 		}
 		
@@ -236,6 +268,7 @@ int executeCmd(int in, int out, char** params)
 	}
 }
 
+/*Sets the current procmask to block the given signal*/
 void blockSignal(int sig){
 	sigset_t signalSet;
 	sigemptyset(&signalSet);
@@ -245,7 +278,7 @@ void blockSignal(int sig){
 	sigprocmask(SIG_BLOCK, &signalSet, NULL);
 
 }
-
+/*Sets the current procmask to unblock the given signal*/
 void unblockSignal(int sig){
 
 	sigset_t signalSet;
@@ -258,7 +291,9 @@ void unblockSignal(int sig){
 }
 
 
-
+/*Registers a new signal handler for the given signal with the 
+*given signal handler(function). Taken from the example code in
+*"Användbara systemanrop" pdf.*/
 void registerSighandler(int signalCode, void (*handler)(int sig)){
 	int ret;
 	struct sigaction signalParameters;
@@ -277,6 +312,9 @@ void registerSighandler(int signalCode, void (*handler)(int sig)){
 	{ perror( "sigaction() failed" ); exit( 1 );}
 }
 
+/*Function for changing current directory to given path.
+ *In case of ~ it will search for the current home folder
+ *and switch to that one instad.*/
 int changeDirectory(char *path)
 {
 	printf("Path %s", path);
