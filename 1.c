@@ -23,6 +23,8 @@ int childStatus;
 
 #define MAX_NUMBER_OF_PARAMS 5
 #define MAX_COMMAND_LENGTH 80
+/*Taken from the internet*/
+#define CHECK(x) if(!(x)) { perror(#x " failed"); }
 
 /**
 Will reap all terminated child processes currently in the process table.
@@ -33,7 +35,6 @@ void backgroundProcessHandler(int sig){
 	pid_t childPid;
 	while((childPid = waitpid(-1, &childStatus, WNOHANG)) > 0){
 		printf("Terminated background process %d\n", childPid);
-		//printTermination("Background", pid);
 	}
 	
 }
@@ -48,16 +49,25 @@ int main(int argc, char *argv[])
 {
 	char cmd[MAX_COMMAND_LENGTH + 1];
 	char* params[MAX_NUMBER_OF_PARAMS + 1];
+	char cwd[1024];
+	char* error;
+	int status;
+
+
 
 
 	#if SIGDET==1
 	registerSighandler(SIGCHLD, backgroundProcessHandler);
 	#endif
+	/*Ignore ctrl-c in the parent. Currently ctrl-c will kill 
+	 *all children since the only way of preventing children from
+	 *receiving the signal would be to change the process group.
+	 *However, by changing the process group we will not be able to
+	 *terminate them since no lists of processes are allowd*/
 	registerSighandler(SIGINT, SIG_IGN);
 
 	while (1){
 		#if SIGDET==0
-		printf("SIDGET OFF");
 		backgroundProcessHandler(0);
 		#endif
 
@@ -65,9 +75,7 @@ int main(int argc, char *argv[])
 		backgr = 0;
 
 		/*Get the current directory and print it as the prompt. getcwd() = getcurrentowrkingdirectory*/
-		char cwd[1024];
-		if (getcwd(cwd, sizeof(cwd)) == NULL)
-			perror("getcwd() error");
+		CHECK(getcwd(cwd, sizeof(cwd)) != NULL);
 		printf("%s$ ",cwd);
 
 		/**
@@ -75,7 +83,7 @@ int main(int argc, char *argv[])
 		otherwise the signal handler will affect fgets.
 		*/
 		blockSignal(SIGCHLD);
-		fgets(cmd, sizeof(cmd),stdin);
+		CHECK(fgets(cmd, sizeof(cmd),stdin) != NULL);
 		unblockSignal(SIGCHLD);
 
 		/*Check if there is any input, otherwise do nothing*/
@@ -100,8 +108,8 @@ int main(int argc, char *argv[])
 		if(strcmp(params[0],"cd")==0)
 		{
 			if(params[1] == NULL) params[1] = "~"; /*writing just cd is equivalent to cd ~ */
-			int status = changeDirectory(params[1]);
-			char* error = strerror(errno);
+			status = changeDirectory(params[1]);
+			error = strerror(errno);
 			if(status){
 				printf("%s\n", error);
 			}
@@ -137,8 +145,10 @@ void parseCmd(char* cmd, char** params)
 int checkEnv(char** params){
 		/*File descriptors for pipes*/
 		int in, fd[2];
-		char* input[MAX_NUMBER_OF_PARAMS+1];
 
+		char* input[MAX_NUMBER_OF_PARAMS+1];
+		char* pager;
+		char* error;
 		/*Set the in pipe to stdin
 		 *Create a pipe for the file descriptor
 		 *Set input to the command to be run
@@ -147,32 +157,31 @@ int checkEnv(char** params){
 		 *Close pipe
 		 *Change in pipe to the write part of pipe*/
 		in = 0;
-		pipe(fd);
+		CHECK(pipe(fd) == 0);
 		input[0] = "printenv";
 		executeCmd(in, fd[1], input);
-		close(fd[1]);
+		CHECK(close(fd[1]) == 0);
 		in = fd[0];
 
 		/*In case user gives any params to checkEnv we run grep on those params*/
 		if(params[1] != NULL){
-			pipe(fd);
+			CHECK(pipe(fd) == 0);
 			params[0] = "grep";
 			executeCmd(in, fd[1], params);
-			close(fd[1]);
+			CHECK(close(fd[1]) == 0);
 			in = fd[0];
 		}
 
-		pipe(fd);
+		CHECK(pipe(fd) == 0);
 		input[0] = "sort";
 		executeCmd(in, fd[1], input);
-		close(fd[1]);
+		CHECK(close(fd[1]) == 0);
 		in = fd[0];
 
 		/*Make sure output goes to stdout again*/
-		if(in != 0)	dup2(in, 0);
+		if(in != 0)	CHECK(dup2(in, 0) != -1);
 		
 		/*Get the current PAGER environment variable, otherwise use less*/
-		char* pager;
 		if((pager = getenv("PAGER"))==NULL){
 			pager = "less";
 		}
@@ -183,13 +192,13 @@ int checkEnv(char** params){
 		/*In case there was an error with executing with less, execute with more instead.
 		 *execvp stops execution of this process if it is sucessful, so this should only
 		 *be run in case it fails.*/
-		pager = "less";
+		// pager = "less";
 
-		input[0] = pager;
-		execvp(input[0], input);
+		// input[0] = pager;
+		// execvp(input[0], input);
 
 
-		char* error = strerror(errno);
+		error = strerror(errno);
 		printf("shell: %s: %s errno: %i\n", params[0], error, errno);
 
 		
@@ -200,21 +209,25 @@ int checkEnv(char** params){
 
 int executeCmd(int in, int out, char** params)
 {
-
 	printf("Starting process %s\n", params[0]);
+	char* error;
+	struct timeval tvBefore;
+	struct timeval tvAfter;
 	/*Fork new process*/
 	pid_t pid = fork();
 
+
 	/*Store time when process started*/
-	struct timeval tvBefore;
-	gettimeofday(&tvBefore, NULL); 
+	
+	CHECK(gettimeofday(&tvBefore, NULL) == 0); 
     	
 
 	if (pid == -1) {
-		char* error = strerror(errno);
+		error = strerror(errno);
 		printf("fork: %s\n", error);
 		return 1;
 	}else if (pid == 0) {
+
 
 		/*if(backgr) setpgid(0,0);*/
 
@@ -222,27 +235,26 @@ int executeCmd(int in, int out, char** params)
 		 *output with the corresponding read and write parts of the given pipes*/
 		if (in != 0)
 		{
-		  dup2 (in, 0);
-		  close (in);
+		  CHECK(dup2 (in, 0) != -1);
+		  CHECK(close (in) != -1);
 		}
 
 		if (out != 1)
 		{
-		  dup2 (out, 1);
-		  close (out);
+		  CHECK(dup2 (out, 1) != -1);
+		  CHECK(close (out) != -1);
 		}
 		
-		execvp(params[0], params);
-		/*If we do not free params here, the program will run with old params again in case the execution fails*/
-		free(params);
-		char* error = strerror(errno);
-		printf("shell: %s: %s\n", params[0], error);
+		execvp(params[0], params);	
+		
+		error = strerror(errno);
+		printf("Command not found: %s: %s\n", params[0], error);
 		return 0;
 	}else {
 
 
 		if(backgr == 0){
-			struct timeval tvAfter;
+			
 			printf("Start foreground process %d\n", pid);
 			/*Wait for foreground process to change status
 			 *We block SIGCHLD here to avoid having background
@@ -254,10 +266,10 @@ int executeCmd(int in, int out, char** params)
 			
 		
 			/*Take timestamp after the process has finished, print out total execution time in ms*/
-			gettimeofday(&tvAfter, NULL); 
+			CHECK(gettimeofday(&tvAfter, NULL) == 0);
 			time_t time = ((tvAfter.tv_sec - tvBefore.tv_sec)*1000000L
 				   +(tvAfter.tv_usec - tvBefore.tv_usec))/1000;
-			printf("Parent process %d terminated in %ims\n", pid, (int)time);
+			printf("Foreground process %d terminated in %ims\n", pid, (int)time);
 			
 		}else{
        		/*setpgid(pid, pid);*/
@@ -271,22 +283,22 @@ int executeCmd(int in, int out, char** params)
 /*Sets the current procmask to block the given signal*/
 void blockSignal(int sig){
 	sigset_t signalSet;
-	sigemptyset(&signalSet);
+	CHECK(sigemptyset(&signalSet) == 0);
 
-	sigaddset(&signalSet, sig);
+	CHECK(sigaddset(&signalSet, sig) == 0);
 
-	sigprocmask(SIG_BLOCK, &signalSet, NULL);
+	CHECK(sigprocmask(SIG_BLOCK, &signalSet, NULL) == 0);
 
 }
 /*Sets the current procmask to unblock the given signal*/
 void unblockSignal(int sig){
 
 	sigset_t signalSet;
-	sigemptyset(&signalSet);
+	CHECK(sigemptyset(&signalSet) == 0);
 
-	sigaddset(&signalSet, sig);
+	CHECK(sigaddset(&signalSet, sig) == 0);
 
-	sigprocmask(SIG_UNBLOCK, &signalSet, NULL);
+	CHECK(sigprocmask(SIG_UNBLOCK, &signalSet, NULL) == 0);
 
 }
 
