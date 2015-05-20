@@ -196,7 +196,6 @@ int checkEnv(char** params){
 			input[0] = pager;
 			/*Replace the new forked child process image with the process of the last command*/
 			execError =	execvp(input[0], input);	
-			// executeCmd(in, 1, input);
 
 			/*In case there was an error with executing with less, execute with more instead.
 			 *execvp stops execution of this process if it is sucessful, so this should only
@@ -226,10 +225,10 @@ int checkEnv(char** params){
 
 int executeCmd(int in, int out, char** params)
 {
-	// printf("Starting process %s with params %s\n", params[0], params[1]);
 	char* error;
 	struct timeval tvBefore;
 	struct timeval tvAfter;
+	time_t time;
 	/*Fork new process*/
 	pid_t pid = fork();
 
@@ -284,7 +283,7 @@ int executeCmd(int in, int out, char** params)
 		
 			/*Take timestamp after the process has finished, print out total execution time in ms*/
 			CHECK(gettimeofday(&tvAfter, NULL) == 0);
-			time_t time = ((tvAfter.tv_sec - tvBefore.tv_sec)*1000000L
+			time = ((tvAfter.tv_sec - tvBefore.tv_sec)*1000000L
 				   +(tvAfter.tv_usec - tvBefore.tv_usec))/1000;
 			printf("Foreground process %d terminated in %ims\n", pid, (int)time);
 			
