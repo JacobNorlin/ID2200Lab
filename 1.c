@@ -39,6 +39,7 @@ void backgroundProcessHandler(int sig){
 	
 }
 
+
 void printTermination(char* pType, int pid){
 	if(WIFEXITED(pid)) printf("%s process %i exited normally", pType, pid);
 	if(WIFSIGNALED(pid)) printf("%s process was terminated by %i signal", pType, WTERMSIG(pid)); 
@@ -56,9 +57,9 @@ int main(int argc, char *argv[])
 
 
 
-	#if SIGDET==1
+	// #if SIGDET==1
 	registerSighandler(SIGCHLD, backgroundProcessHandler);
-	#endif
+	// #endif
 	/*Ignore ctrl-c in the parent. Currently ctrl-c will kill 
 	 *all children since the only way of preventing children from
 	 *receiving the signal would be to change the process group.
@@ -68,7 +69,7 @@ int main(int argc, char *argv[])
 
 	while (1){
 		#if SIGDET==0
-		backgroundProcessHandler(0);
+		// backgroundProcessHandler(0);
 		#endif
 
 		/*Reset the background flag before a new command is read*/
@@ -132,7 +133,6 @@ void parseCmd(char* cmd, char** params)
 	/*Parse only the max number of commands. Currently only ignores if too many commands are given*/
 	for(i = 0; i < MAX_NUMBER_OF_PARAMS; i++) {
 		params[i] = strsep(&cmd, " ");
-		//printf("Params[%i]: %s",i,  params[i]);
 		if(params[i] == NULL) break;
 	}
 	/*Check if background process*/
@@ -149,57 +149,75 @@ int checkEnv(char** params){
 		char* input[MAX_NUMBER_OF_PARAMS+1];
 		char* pager;
 		char* error;
-		/*Set the in pipe to stdin
-		 *Create a pipe for the file descriptor
-		 *Set input to the command to be run
-		 *Execute that command with in as input pipe
-		 *and fd[1] as the output pipe.
-		 *Close pipe
-		 *Change in pipe to the write part of pipe*/
-		in = 0;
-		CHECK(pipe(fd) == 0);
-		input[0] = "printenv";
-		executeCmd(in, fd[1], input);
-		CHECK(close(fd[1]) == 0);
-		in = fd[0];
+		int execError;
+		pid_t pid;
+		/*Make sure input params contains null so execvp works properly*/
+	    input[1] = NULL;
+		
+	    /*Create a new process to do the entire checkEnv pipeline within*/
+		pid = fork();
 
-		/*In case user gives any params to checkEnv we run grep on those params*/
-		if(params[1] != NULL){
+		if(pid == 0){
+			/*Set the in pipe to stdin
+			 *Create a pipe for the file descriptor
+			 *Set input to the command to be run
+			 *Execute that command with in as input pipe
+			 *and fd[1] as the output pipe.
+			 *Close pipe
+			 *Change in pipe to the write part of pipe*/
+			in = 0;
 			CHECK(pipe(fd) == 0);
-			params[0] = "grep";
-			executeCmd(in, fd[1], params);
+			input[0] = "printenv";
+			executeCmd(in, fd[1], input);
 			CHECK(close(fd[1]) == 0);
 			in = fd[0];
+
+			/*In case user gives any params to checkEnv we run grep on those params*/
+			if(params[1] != NULL){
+				CHECK(pipe(fd) == 0);
+				params[0] = "grep";
+				executeCmd(in, fd[1], params);
+				CHECK(close(fd[1]) == 0);
+				in = fd[0];
+			}
+
+			CHECK(pipe(fd) == 0);
+			input[0] = "sort";
+			executeCmd(in, fd[1], input);
+			CHECK(close(fd[1]) == 0);
+			in = fd[0];
+			/*Make sure output goes to stdout again*/
+			if(in != 0)	CHECK(dup2(in, 0) != -1);
+			
+			/*Get the current PAGER environment variable, otherwise use less*/
+			if((pager = getenv("PAGER"))==NULL){
+				pager = "less";
+			}
+			
+			input[0] = pager;
+			/*Replace the new forked child process image with the process of the last command*/
+			execError =	execvp(input[0], input);	
+			// executeCmd(in, 1, input);
+			
+			/*In case there was an error with executing with less, execute with more instead.
+			 *execvp stops execution of this process if it is sucessful, so this should only
+			 *be run in case it fails.*/
+			if(execError == -1){
+				pager = "more";
+
+				input[0] = pager;
+				execvp(input[0], input);
+
+			}
+
+
+			error = strerror(errno);
+			printf("shell: %s: %s errno: %i\n", params[0], error, errno);
+		}else{
+			/*Reap the final process*/
+			wait(NULL);
 		}
 
-		CHECK(pipe(fd) == 0);
-		input[0] = "sort";
-		executeCmd(in, fd[1], input);
-		CHECK(close(fd[1]) == 0);
-		in = fd[0];
-
-		/*Make sure output goes to stdout again*/
-		if(in != 0)	CHECK(dup2(in, 0) != -1);
-		
-		/*Get the current PAGER environment variable, otherwise use less*/
-		if((pager = getenv("PAGER"))==NULL){
-			pager = "less";
-		}
-		
-		input[0] = pager;
-		execvp(input[0], input);
-
-		/*In case there was an error with executing with less, execute with more instead.
-		 *execvp stops execution of this process if it is sucessful, so this should only
-		 *be run in case it fails.*/
-		// pager = "less";
-
-		// input[0] = pager;
-		// execvp(input[0], input);
-
-
-		error = strerror(errno);
-		printf("shell: %s: %s errno: %i\n", params[0], error, errno);
 
 		
 		return 0;
@@ -209,7 +227,7 @@ int checkEnv(char** params){
 
 int executeCmd(int in, int out, char** params)
 {
-	printf("Starting process %s\n", params[0]);
+	// printf("Starting process %s with params %s\n", params[0], params[1]);
 	char* error;
 	struct timeval tvBefore;
 	struct timeval tvAfter;
@@ -246,7 +264,7 @@ int executeCmd(int in, int out, char** params)
 		}
 		
 		execvp(params[0], params);	
-		
+
 		error = strerror(errno);
 		printf("Command not found: %s: %s\n", params[0], error);
 		return 0;
@@ -338,4 +356,3 @@ int changeDirectory(char *path)
 	}
 	return chdir(path);
 }
-
