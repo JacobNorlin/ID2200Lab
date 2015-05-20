@@ -56,10 +56,9 @@ int main(int argc, char *argv[])
 
 
 
-
-	// #if SIGDET==1
+	#if SIGDET==1
 	registerSighandler(SIGCHLD, backgroundProcessHandler);
-	// #endif
+	#endif
 	/*Ignore ctrl-c in the parent. Currently ctrl-c will kill 
 	 *all children since the only way of preventing children from
 	 *receiving the signal would be to change the process group.
@@ -69,7 +68,7 @@ int main(int argc, char *argv[])
 
 	while (1){
 		#if SIGDET==0
-		// backgroundProcessHandler(0);
+		backgroundProcessHandler(0);
 		#endif
 
 		/*Reset the background flag before a new command is read*/
@@ -198,7 +197,7 @@ int checkEnv(char** params){
 			/*Replace the new forked child process image with the process of the last command*/
 			execError =	execvp(input[0], input);	
 			// executeCmd(in, 1, input);
-			
+
 			/*In case there was an error with executing with less, execute with more instead.
 			 *execvp stops execution of this process if it is sucessful, so this should only
 			 *be run in case it fails.*/
